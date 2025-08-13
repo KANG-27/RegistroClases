@@ -4,12 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "No reservar; solo navegar y tomar capturas"
+        description: "No reservar; solo navegar (sin screenshots)"
         type: boolean
         default: true
   schedule:
-    # Ejemplo: Lunes-Sábado 07:05 Bogotá (UTC-5) = 12:05 UTC
-    - cron: '5 12 * * 1-6'
+    - cron: '5 12 * * 1-6' # 07:05 Bogotá
 
 jobs:
   run:
@@ -19,26 +18,13 @@ jobs:
       SMART_USER: ${{ secrets.SMART_USER }}
       SMART_PASS: ${{ secrets.SMART_PASS }}
       DRY_RUN: ${{ inputs.dry_run }}
+      DEBUG: puppeteer:*   # logs detallados en consola
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Check env present (no prints secrets)
+        with: { node-version: 20 }
+      - name: Check env present
         run: node -e "if(!process.env.SMART_USER||!process.env.SMART_PASS){throw new Error('Missing env vars')}"
-
       - run: npm ci
-
       - name: Run script
         run: node scripts/smart-academy.js
-
-      # ← sube capturas SIEMPRE (falle o no)
-      - name: Subir screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots
-          path: screenshots/**
-          if-no-files-found: ignore

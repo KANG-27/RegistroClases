@@ -1,9 +1,8 @@
-require('dotenv').config(); // solo para local con .env
-const fs = require('fs');
+if (!process.env.CI) { require('dotenv').config(); } // .env solo local
 const puppeteer = require('puppeteer');
 
-const delay = ms => new Promise(r => setTimeout(r, ms));
-const log   = msg => console.log(`[${new Date().toLocaleString()}] ${msg}`);
+const delay  = ms => new Promise(r => setTimeout(r, ms));
+const log    = msg => console.log(`[${new Date().toLocaleString()}] ${msg}`);
 const DRY_RUN = (process.env.DRY_RUN || '').toString() === 'true';
 const IS_CI   = (process.env.CI || '').toString() === 'true';
 
@@ -19,7 +18,7 @@ async function resolveFrame(page, iframeSelector, waitForSelectorInFrame = null,
       }
       return frame;
     } catch {
-      await page.waitForTimeout(700);
+      await page.waitForTimeout(700); // el iframe se re-renderizó; reintenta
     }
   }
   throw new Error(`No se pudo estabilizar ${iframeSelector}`);
@@ -27,7 +26,6 @@ async function resolveFrame(page, iframeSelector, waitForSelectorInFrame = null,
 
 async function loginYAccederAsignacion(page) {
   await page.goto('https://schoolpack.smart.edu.co/idiomas/alumnos.aspx', { waitUntil: 'networkidle2' });
-  await snap(page, '00_load');
 
   const USER = process.env.SMART_USER;
   const PASS = process.env.SMART_PASS;
@@ -41,37 +39,34 @@ async function loginYAccederAsignacion(page) {
     page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => {}),
     page.waitForTimeout(2000)
   ]);
-  await snap(page, '01_after_login');
 
   // Cerrar modal si aparece
   try {
     await page.waitForSelector('#gxp0_cls', { visible: true, timeout: 6000 });
     await page.click('#gxp0_cls');
-    await snap(page, '02_modal_closed');
   } catch {}
 
-  // Si sigue el campo de usuario, el login no pasó
+  // Verifica que no sigues en login
   if (await page.$('#vUSUCOD')) {
-    await snap(page, '02_login_failed_or_blocked');
     throw new Error('Parece que no inició sesión (sigo viendo #vUSUCOD). Revisa secrets o bloqueo.');
   }
 
   // Botón de asignación
-  try {
-    await page.waitForSelector('#IMAGE18', { visible: true, timeout: 12000 });
-  } catch {
-    await snap(page, '03_before_IMAGE18_not_found');
-    throw new Error('No apareció #IMAGE18 tras el login (posible layout/responsive distinto).');
-  }
-
+  await page.waitForSelector('#IMAGE18', { visible: true, timeout: 12000 });
   await page.click('#IMAGE18');
 
-  await page.waitForSelector('#span_W0030TMPCODART_0001', { visible: true });
-  await page.click('#span_W0030TMPCODART_0001');
+  // Da tiempo a que aparezca el primer iframe
+  await Promise.race([
+    page.waitForSelector('#gxp0_ifrm', { timeout: 15000 }),
+    page.waitForTimeout(1500)
+  ]);
+
+  // Item y botón (selector flexible por si cambia el sufijo _0001)
+  await page.waitForSelector('[id^="span_W0030TMPCODART_"]', { visible: true });
+  await page.click('[id^="span_W0030TMPCODART_"]');
 
   await page.waitForSelector('#W0030BUTTON1', { visible: true });
   await page.click('#W0030BUTTON1');
-  await snap(page, '04_after_clicks_to_iframe1');
 }
 
 async function intentarProgramarClase(page) {
@@ -98,9 +93,8 @@ async function intentarProgramarClase(page) {
 
     await filas[filas.length - 1].click();
 
-    // DRY RUN: no confirmar, solo evidencia
+    // DRY RUN → no confirmar
     if (DRY_RUN) {
-      await snap(page, '05_dryrun_before_confirm');
       log('🧪 DRY_RUN activo: NO se hace click final. Navegación OK.');
       return true;
     }
@@ -140,7 +134,7 @@ async function intentarProgramarClase(page) {
     if (manana.getDay() === 0) { log('⛔ Mañana es domingo. No hay clases.'); return; }
 
     browser = await puppeteer.launch({
-      headless: IS_CI ? true : false, // CI headless; local puedes ver el navegador
+      headless: IS_CI ? true : false,  // en CI: headless
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
     page = await browser.newPage();
@@ -165,12 +159,10 @@ async function intentarProgramarClase(page) {
     // Iframe 2 (primera estabilización)
     await resolveFrame(page, '#gxp1_ifrm', '#vDIA');
 
-    // Intentar programar (recaptura internamente cada intento)
     await intentarProgramarClase(page);
 
   } catch (err) {
     console.error(`[${new Date().toLocaleString()}] ❌ Error:`, err.message);
-    await snap(page, '99_error');
   } finally {
     await browser?.close();
   }
