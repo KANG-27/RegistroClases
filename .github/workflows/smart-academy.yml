@@ -1,12 +1,15 @@
 name: Agendar clase Smart Academy
 
 on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "No reservar; solo navegar y tomar capturas"
+        type: boolean
+        default: true
   schedule:
     # Ejemplo: Lunes-Sábado 07:05 Bogotá (UTC-5) = 12:05 UTC
     - cron: '5 12 * * 1-6'
-  workflow_dispatch: {}
-
-
 
 jobs:
   run:
@@ -15,16 +18,27 @@ jobs:
       TZ: America/Bogota
       SMART_USER: ${{ secrets.SMART_USER }}
       SMART_PASS: ${{ secrets.SMART_PASS }}
+      DRY_RUN: ${{ inputs.dry_run }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Check env present (no prints secrets)
+        run: node -e "if(!process.env.SMART_USER||!process.env.SMART_PASS){throw new Error('Missing env vars')}"
+
       - run: npm ci
-      - run: node scripts/smart-academy.js
-      - name: Subir screenshots si falla
-        if: failure()
+
+      - name: Run script
+        run: node scripts/smart-academy.js
+
+      # ← sube capturas SIEMPRE (falle o no)
+      - name: Subir screenshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: debug
+          name: screenshots
           path: screenshots/**
+          if-no-files-found: ignore
