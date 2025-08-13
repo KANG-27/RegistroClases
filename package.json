@@ -1,13 +1,14 @@
 {
   "dependencies": {
-    "puppeteer": "^24.8.2"
+    "dotenv": "^17.2.1",
+    "puppeteer": "^24.16.1"
   },
   "name": "registroclases",
   "version": "1.0.0",
   "main": "index.js",
-  "devDependencies": {},
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node scripts/smart-academy.js"
   },
   "keywords": [],
   "author": "",
