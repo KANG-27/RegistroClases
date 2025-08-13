@@ -70,61 +70,112 @@ async function loginYAccederAsignacion(page) {
 }
 
 async function intentarProgramarClase(page) {
-    const maxIntentos = 3;
+  const maxIntentos = 3;
 
-    for (let intento = 1; intento <= maxIntentos; intento++) {
-        log(`🔁 Intento ${intento} de ${maxIntentos}...`);
+  for (let intento = 1; intento <= maxIntentos; intento++) {
+    log(`🔁 Intento ${intento} de ${maxIntentos}...`);
 
-        const frame2 = await resolveFrame(page, '#gxp1_ifrm', '#vDIA');
+    const frame2 = await resolveFrame(page, '#gxp1_ifrm', '#vDIA');
 
-        const opciones = await frame2.$$eval('#vDIA option', opts =>
-            opts.map(o => ({ value: o.value, text: o.textContent.trim() }))
-        );
-        if (opciones.length <= 1) { log('❌ No hay opción para el día siguiente.'); return false; }
+    // 1) Sede / rango (si existe)
+    try {
+      await frame2.waitForSelector('#vREGCONREG', { timeout: 1500 });
+      await frame2.select('#vREGCONREG', '8');
+      await frame2.evaluate(() => {
+        const el = document.querySelector('#vREGCONREG');
+        if (el) el.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await delay(500);
+    } catch {}
 
-        const valorDiaSiguiente = opciones[1].value;
-        log(`📅 Día seleccionado: ${valorDiaSiguiente}`);
-        await frame2.select('#vDIA', valorDiaSiguiente);
-        await delay(800);
+    // 2) Selecciona "mañana" (2do option) + dispara change
+    await frame2.waitForSelector('#vDIA', { visible: true });
+    const opciones = await frame2.$$eval('#vDIA option', opts =>
+      opts.map(o => ({ value: o.value, text: o.textContent.trim() }))
+    );
+    if (opciones.length <= 1) {
+      log('❌ No hay opción para el día siguiente (#vDIA).');
+      return false;
+    }
+    const valorDiaSiguiente = opciones[1].value;
+    log(`📅 Día seleccionado: ${valorDiaSiguiente} (${opciones[1].text})`);
+    await frame2.select('#vDIA', valorDiaSiguiente);
+    await frame2.evaluate(() => {
+      const el = document.querySelector('#vDIA');
+      el && el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
 
-        await frame2.waitForSelector('#Grid1ContainerTbl tbody tr', { visible: true });
+    // 3) Espera a que aparezcan filas (polling) con fallback "Buscar"
+    let filasCount = 0;
+    for (let t = 0; t < 12; t++) { // ~6s
+      try {
+        await frame2.waitForSelector('#Grid1ContainerTbl tbody tr', { timeout: 500 });
         const filas = await frame2.$$('#Grid1ContainerTbl tbody tr');
-        if (!filas.length) { log('⚠️ No hay filas/horarios para mañana.'); return false; }
-
-        await filas[filas.length - 1].click();
-
-        // DRY RUN → no confirmar
-        if (DRY_RUN) {
-            log('🧪 DRY_RUN activo: NO se hace click final. Navegación OK.');
-            return true;
-        }
-
-        await frame2.click('#BUTTON1');
-        await delay(600);
-
-        const mensajeError = await frame2.$$eval('#TABLE2 .gx-warning-message', elems =>
-            elems.map(e => e.innerText.trim()).find(texto =>
-                texto.includes('No hay salones disponibles') ||
-                texto.includes('La clase no puede ser programada, debido a que existen clases anteriores programadas en fechas futuras.') ||
-                texto.includes('Te invitamos a validar disponibilidad en otras franjas horarias')
-            )
-        );
-
-        if (mensajeError) {
-            log(`⚠️ Error al programar: ${mensajeError}`);
-            try { await frame2.select('#vREGCONREG', '8'); } catch { }
-            await delay(1500);
-            continue; // reintenta
-        }
-
-        log('✅ Clase asignada correctamente.');
-        await delay(1500);
-        return true;
+        filasCount = filas.length;
+        if (filasCount > 0) break;
+      } catch {}
+      await delay(500);
     }
 
-    log('❌ No se pudo asignar la clase tras varios intentos.');
-    return false;
+    if (filasCount === 0) {
+      // Fallback: intenta buscar/refrescar si hay botón de búsqueda
+      const btnBuscar = await frame2.$('#BUTTON2');
+      if (btnBuscar) {
+        log('🔎 No hay filas; probando botón de búsqueda (#BUTTON2)...');
+        await btnBuscar.click();
+        await delay(800);
+        const filas = await frame2.$$('#Grid1ContainerTbl tbody tr');
+        filasCount = filas.length;
+      }
+    }
+
+    if (filasCount === 0) {
+      log('⚠️ No hay filas/horarios cargados para mañana tras seleccionar el día.');
+      continue; // intenta nuevamente cambiando sede/rango/refresh
+    }
+
+    log(`✅ Filas encontradas: ${filasCount}. Seleccionando horario...`);
+    const filas = await frame2.$$('#Grid1ContainerTbl tbody tr');
+
+    // Prueba primero la última; si falla, la primera en el siguiente intento
+    const index = intento === 1 ? filas.length - 1 : 0;
+    await filas[index].click();
+
+    // 🔬 Modo prueba: no confirmes, retorna OK
+    if (DRY_RUN) {
+      log('🧪 DRY_RUN activo: NO se hace click final. Navegación OK.');
+      return true;
+    }
+
+    // 4) Confirmar
+    await frame2.click('#BUTTON1');
+    await delay(700);
+
+    // 5) Errores conocidos
+    const mensajeError = await frame2.$$eval('#TABLE2 .gx-warning-message', elems =>
+      elems.map(e => e.innerText.trim()).find(texto =>
+        texto.includes('No hay salones disponibles') ||
+        texto.includes('clases anteriores programadas en fechas futuras') ||
+        texto.includes('valida disponibilidad en otras franjas')
+      )
+    );
+
+    if (mensajeError) {
+      log(`⚠️ Error al programar: ${mensajeError}`);
+      // Cambia condición/rango e intenta otra vez
+      try { await frame2.select('#vREGCONREG', '8'); } catch {}
+      await delay(1500);
+      continue;
+    }
+
+    log('🎉 Clase asignada correctamente.');
+    return true;
+  }
+
+  log('❌ No se pudo asignar la clase tras varios intentos.');
+  return false;
 }
+
 
 (async () => {
     let browser, page;
