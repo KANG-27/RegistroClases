@@ -15,7 +15,6 @@ jobs:
       TZ: America/Bogota
       SMART_USER: ${{ secrets.SMART_USER }}
       SMART_PASS: ${{ secrets.SMART_PASS }}
-      DRY_RUN: ${{ inputs.dry_run }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
